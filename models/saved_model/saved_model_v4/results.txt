@@ -1,0 +1,11 @@
+===== Evaluation Results =====
+eval_loss: 0.0869
+eval_accuracy: 0.9775
+eval_precision: 0.9744
+eval_recall: 0.9760
+eval_f1: 0.9752
+eval_auc: 0.9969
+eval_runtime: 9.5760
+eval_samples_per_second: 1409.9820
+eval_steps_per_second: 22.0340
+epoch: 4.0000
