@@ -1,0 +1,33 @@
+# Ignore data and large files
+*.csv
+*.zip
+*.h5
+*.pt
+*.pkl
+*.safetensors
+*.log
+*.png
+*.jpg
+*.jpeg
+data/
+models/
+labeled_data/
+flagged_cases/
+train_distilbert_phishing/
+models/
+evaluation/
+
+# Ignore secrets
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+
+# OS junk
+.DS_Store
+desktop.ini
+
+# Virtual envs
+venv/
+env/
