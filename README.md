@@ -35,5 +35,5 @@ When suspicious content is found, the system can alert the user or log the case 
 - Python 3.8 or higher  
 - Tesseract OCR installed at:  
   `C:\Program Files\Tesseract-OCR\tesseract.exe`
-  - cp env.example .env  # Edit to add OpenAI API key if needed
+- cp env.example .env  # Edit to add OpenAI API key if needed
 ---
