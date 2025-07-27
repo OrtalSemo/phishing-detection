@@ -10,7 +10,7 @@
 *.jpg
 *.jpeg
 data/
-
+# models/
 labeled_data/
 flagged_cases/
 train_distilbert_phishing/
