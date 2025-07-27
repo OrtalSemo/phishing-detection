@@ -23,6 +23,7 @@ import csv
 import threading
 import difflib
 import concurrent.futures
+from typing import List, Tuple
 
 from urllib.parse import urlparse
 import pyautogui
@@ -48,7 +49,7 @@ pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tessera
 PSM_MODE = r'--oem 3 --psm 11'  # OCR Engine Mode + Page Segmentation Mode
 PHISHING_THRESHOLD = 0.92
 CHUNK_SIZE = 512  # Max number of tokens per input to DistilBERT
-BACKUP_THRESHOLD = 0.75  # Set as appropriate
+BACKUP_THRESHOLD = 0.90 # Only trigger fallback just below the main threshold
 # ===================================
 
 # print("OPENAI_API_KEY:", os.getenv("OPENAI_API_KEY"))
@@ -72,20 +73,24 @@ def analyze_with_chatgpt(text):
     )
     try:
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+             model="gpt-4",
             messages=[
                 {
                     "role": "system",
-                    "content": (
-                        "You are a cybersecurity and phishing detection expert. All incoming messages are texts extracted from screenshots using OCR technology. "
-                        "These texts may be noisy, fragmented, or contain formatting errors due to the OCR process. Do not flag a message as phishing based solely on unclear structure, randomness, or visual artifacts.\n\n"
-                        "Your job is to determine whether the content is likely to be part of a phishing attempt. Focus on meaningful phishing indicators such as:\n"
-                        "• Urgent or manipulative language\n"
-                        "• Requests for personal/sensitive information\n"
-                        "• Suspicious or mismatched links\n"
-                        "• Imitation of known services or brands\n\n"
-                        "When uncertain, respond that the result is inconclusive and explain what additional context is needed. Be careful not to misclassify messages due to noise introduced by OCR."
-                    ),
+                    "content": ( "You're a cybersecurity and phishing detection expert. Each incoming message is OCR output from a screenshot — it may contain noise, formatting errors, or random characters.\n\n"
+                                "Your task: Determine whether the message is part of a phishing attempt. Be strict — do not flag a message as phishing unless at least TWO of the following conditions are met:\n\n"
+                                "1. Manipulative or urgent language (e.g. 'your account will be suspended', 'act now')\n"
+                                "2. Request for credentials, personal or financial information\n"
+                                "3. Suspicious, masked, or malformed link\n"
+                                "4. Use of a well-known brand name in a misleading or fake context\n\n"
+                                "If only one of these conditions is present, or if the text is unclear or incomplete, classify as SAFE.\n\n"
+                                "Ignore noise caused by OCR (random characters, poor formatting, etc.). Focus only on the semantic meaning.\n\n"
+                                "Examples of SAFE content:\n"
+                                "- No clear phishing intent\n"
+                                "- Legitimate services like microsoft.com or mail.google.com\n"
+                                "- General messages without manipulation or links\n\n"
+                                "If you're unsure or lack context, return: 'Inconclusive – more context needed'."
+                            ),
                 },
                 {"role": "user", "content": prompt},
             ],
@@ -94,16 +99,88 @@ def analyze_with_chatgpt(text):
         )
         return response.choices[0].message.content
     except Exception as e:
-        print(f"[ChatGPT ERROR] {type(e).__name__}: {e}")
+        print(f"  [ChatGPT ERROR] {type(e).__name__}: {e}")
         return "Unable to analyze with ChatGPT"
 
 # --- Global Constants for Heuristics ---
+
 suspicious_keywords = [
-    'login', 'verify', 'update', 'secure', 'account', 'reset',
-    'signin', 'password', 'bank', 'confirm', 'validate', 'webscr'
+    'login', 'verify', 'update', 'secure', 'reset', 'phishing',
+    'signin', 'password', 'bank', 'confirm', 'validate', 'webscr',
+    'wallet', 'security', 'locked', 'unusual activity', 'deactivate',
+    'payment', 'alert', 'click here', 'unlock', 'invoice', 'urgent',
+    'credential', 'session expired', 'verify identity', 'your account',
+    'limited access', 'unrecognized', 'recovery', 'restricted', 'authentication',
+    'customs duty', 'customs', 'parcel', 'reschedule', 'refund', 'refunds',
+    'funds', 'refunded', 'refunding', 'shipping fee', 'shipping fees',
+    'duty', 'tracking', 'transfer', 'transferred',
+    'secure-', 'account-', 'login-', 'update-', 'verify-', 'reset-',
+    'confirm-', 'validate-', 'webscr-', 'wallet-', 'security-', 'locked-',
+    'unusual activity-', 'deactivate-', 'payment-', 'alert-', 'click here-',
+    'unlock-', 'invoice-', 'urgent-', 'credential-', 'session expired-',
+    'verify identity-', 'your account-', 'limited access-', 'unrecognized-',
+    'recovery-', 'restricted-', 'authentication-', 'customs duty-', 'customs-',
+    'parcel-', 'reschedule-', 'refund-', 'refunds-', 'funds-', 'refunded-',
+    'refunding-', 'shipping fee-', 'shipping fees-', 'duty-', 'tracking-',
+    'transfer-', 'transferred-',
+    'billing', '-online', 'log in', 'account access', 'email or mobile',
+    'enter password', 'sign in to your account',
+    'act now', 'verify now', 'click to verify', 'login now', 'update now',
+    'dear customer', 'dear user', 'verify your email', 'claim your reward',
+    'you have won', 'apple lottery', 'lotto', 'selected', 'winner',
+    'security update', 'important notice', 'take action', 'you are eligible',
+    'final notice', 'time sensitive', 'response required', 'limited time',
+    'reset your credentials', 'access denied', 'payment required',
+    'unauthorized login', 'security alert', 'bank account', 'money transfer',
+    'urgent payment', 'suspended', 'claim now', 'email verification',
+    'sign in required', 'temporary hold', 'account suspended','invoice','blocked','flagged','warning','back to safety','enter site','trust'
 ]
-bad_tlds = ['.zip', '.tk', '.cn', '.gq', '.ml', '.ru', '.xyz']
-known_shorteners = ['bit.ly', 'tinyurl.com', 't.co', 'goo.gl', 'ow.ly', 'buff.ly']
+
+bad_tlds = [
+    '.zip', '.tk', '.cn', '.gq', '.ml', '.ru', '.xyz',
+    '.top', '.cf', '.work', '.click', '.support', '.fit', '.review',
+    '.country', '.stream', '.biz', '.monster', '.su', '.pw', '.info',
+    '.loan', '.rest', '.cam', '.men', '.party', '.host'
+]
+
+known_shorteners = [
+    'bit.ly', 'tinyurl.com', 't.co', 'goo.gl', 'ow.ly', 'buff.ly',
+    'rebrand.ly', 'shorte.st', 'cutt.ly', 'rb.gy', 'is.gd', 'short.cm',
+    'v.gd', 'soo.gd', 'bl.ink', 't.ly', 'clck.ru', 'lnkd.in',
+    's.id', 'qr.ae', 'adf.ly'
+]
+
+soft_blacklist_topics = {
+    "shipping": [
+        "parcel", "tracking", "reschedule", "customs", "shipping", "delivery",
+        "warehouse", "package", "post office", "delivery failed", "arrived",
+        "track", "shipment", "custom fee"
+    ],
+    "finance": [
+        "refund", "payment", "invoice", "fee", "bank", "wallet", "billing",
+        "charge", "amount", "funds", "refunded", "refunding", "shipping fee",
+        "shipping fees", "duty", "tracking", "transfer", "transferred"
+    ],
+    "account_update": [
+        "verify", "update", "confirm", "identity", "secure", "reset",
+        "credentials", "authentication", "validate identity", "locked account",
+        "account recovery", "login issues", "restore access"
+    ],
+     "site_warning": [
+        "warning", "suspicious site", "suspected phishing", "phishing site",
+        "site ahead", "flagged", "avoid this link", "unsafe", "blocked website",
+        "blocked by your organization", "contact your administrator", "red screen",
+        "security warning", "review your flagged website", "back to safety"
+    ]
+}
+
+keyword_scores = {
+    "high": {'verify': 2, 'unauthorized': 2, 'security alert': 2},
+    "medium": {'login': 1, 'password': 1, 'update': 1,'limited time': 1},
+    "low": {'account': 0.5, 'access': 0.5, 'security': 0.5}
+}
+
+
 
 # --- OCR Correction Function ---
 def correct_ocr_errors(text):
@@ -203,9 +280,7 @@ def filter_ocr_lines(text):
     import re
 
     ui_words = [
-        "search", "menu", "settings", "sign in", "sign up", "q ", "pm", "am",
-        "goodreads", "linkedin", "bookmark", "profile", "202"
-    ]
+        "search", "menu", "settings", "sign in", "sign up", "q ", "pm", "am" ]
     date_time_patterns = [
         r'\b\d{1,2}:\d{2}\b',                # 12:34
         r'\b\d{1,2}:\d{2}\s?(am|pm)\b',      # 12:34 am
@@ -269,12 +344,41 @@ def minimal_ocr_line_filter(text):
         filtered = '\n'.join([line for line in lines if len(line.strip()) >= 4])
     return filtered
 
+def analyze_text_topics(text: str) -> Tuple[int, List[str]]:
+    text_lower = text.lower()
+    matched_topics = []
+    score = 0
+    for topic, keywords in soft_blacklist_topics.items():
+        if any(keyword in text_lower for keyword in keywords):
+            matched_topics.append(topic)
+            score += 1
+    return score, list(set(matched_topics))
+
+def calculate_keyword_score(text: str) -> Tuple[float, List[str]]:
+    text_lower = text.lower()
+    score = 0
+    found_keywords = []
+    
+    all_tiers = {**keyword_scores["high"], **keyword_scores["medium"], **keyword_scores["low"]}
+    sorted_keywords = sorted(all_tiers.keys(), key=len, reverse=True)
+    
+    for kw in sorted_keywords:
+        pattern = r'\b' + re.escape(kw) + r'\b'
+        if re.search(pattern, text_lower):
+            score += all_tiers[kw]
+            found_keywords.append(kw)
+            text_lower = text_lower.replace(kw, "")
+            
+    return score, list(set(found_keywords))
+
+
 def process_text(text, timestamp, tokenizer, model, softmax, suspicious_keywords, PHISHING_THRESHOLD, CHUNK_SIZE, BACKUP_THRESHOLD):
     raw_text = text  # Save the original, unfiltered text for logging
+    chatgpt_used = False
+    chatgpt_result = "N/A"
 
     # --- Minimal OCR line filtering ---
     text = minimal_ocr_line_filter(text)
-    print(f"\n[DEBUG] Filtered text to be sent to model:\n{text}\n")
     # --- OCR Correction ---
     text = correct_ocr_errors(text)
     # --- Clean Text ---
@@ -282,14 +386,8 @@ def process_text(text, timestamp, tokenizer, model, softmax, suspicious_keywords
 
     # --- Extract and Analyze URLs from Text ---
     urls = extract_urls(text)
-    phishing_keywords_extra = [
-        'urgent', 'suspend', 'unauthorized', 'action required', 'limited time',
-        'reset', 'security alert', 'reactivate', 'access', 'billing', 'invoice',
-        'credentials', 'verify identity'
-    ]
-    all_phishing_keywords = suspicious_keywords + phishing_keywords_extra
-    words = text.lower().split()
-    found_keywords = [word for word in words if word in all_phishing_keywords]
+    keyword_score, found_keywords = calculate_keyword_score(text)
+    topic_score, matched_topics = analyze_text_topics(text)
     suspicious_urls = [u for u in urls if is_suspicious_url(u)]
 
     # --- Count unique domains ---
@@ -302,12 +400,8 @@ def process_text(text, timestamp, tokenizer, model, softmax, suspicious_keywords
         except Exception:
             continue
 
-    print(f"\n[DEBUG] URLs found: {urls}")
-    print(f"[DEBUG] Suspicious URLs: {suspicious_urls}")
-    print(f"[DEBUG] Keywords found: {found_keywords}")
-
     # --- Classify Text using DistilBERT in Chunks ---
-    print(f"\n[DEBUG] Text sent to model:\n{text}\n")
+    print(f"\n[DEBUG] Final text sent to model:\n{text}\n")
     tokens = tokenizer(text, return_tensors="pt", truncation=True, max_length=CHUNK_SIZE)["input_ids"][0]
     chunks = [tokens[i:i+CHUNK_SIZE] for i in range(0, len(tokens), CHUNK_SIZE)]
 
@@ -338,27 +432,57 @@ def process_text(text, timestamp, tokenizer, model, softmax, suspicious_keywords
             max_confidence = conf
             final_prediction = pred
 
-    print(f"[DEBUG] Model confidence: {max_confidence:.4f}")
+    # Decision logic refactored from evaluate_safenet.py for improved accuracy
+    label = "safe" # Default to safe
+    is_phishing_predicted_by_model = (final_prediction == 1)
 
-    # --- Final Decision Logic: Require ALL indicators ---
-    print("\nPrediction Result:")
-    if (
-        final_prediction == 1
-        and (max_confidence >= PHISHING_THRESHOLD)
-        and found_keywords
-        and suspicious_urls
-    ):
+    print(f"[DEBUG] Model output: {'phishing' if is_phishing_predicted_by_model else 'safe'} (Confidence: {max_confidence:.4f})")
+
+    # --- Component Scoring ---
+    model_score = 0
+    if is_phishing_predicted_by_model and max_confidence >= PHISHING_THRESHOLD:
+        model_score = 2
+    elif is_phishing_predicted_by_model and max_confidence >= BACKUP_THRESHOLD:
+        model_score = 1
+
+    confidence_bonus = 1 if max_confidence >= 0.9 else 0
+
+    url_score = 0
+    if len(suspicious_urls) >= 1:
+        url_score += 1
+    if any(urlparse(url).netloc.endswith(tld) for url in suspicious_urls for tld in bad_tlds):
+        url_score += 1
+
+    total_score = model_score + confidence_bonus + keyword_score + url_score + topic_score
+
+    print(f"  [DEBUG] Suspicion Score: {total_score} (Model: {model_score}, Confidence Bonus: {confidence_bonus}, Keywords: {keyword_score}, URLs: {url_score}, Topics: {topic_score})")
+
+    # --- Final Prediction ---
+    if total_score >= 4:
+        label = "phishing"
+    elif total_score >= 3:
+        # Trigger ChatGPT only if there are some non-weak signals
+        if keyword_score >= 1 or url_score >= 1:
+            print(f"  [INFO] Medium suspicion (score={total_score}), falling back to ChatGPT...")
+            chatgpt_used = True
+            chatgpt_result = analyze_with_chatgpt(text)
+            print(f"  [INFO] ChatGPT analysis result: {chatgpt_result}")
+            if "PHISHING" in chatgpt_result.upper():
+                label = "phishing"
+        else:
+            print(f"  [INFO] Score ({total_score}) in suspected range, but keyword/URL signals are weak. Classifying as safe.")
+
+    # --- Final Decision Logic: Multi-tiered ---
+    print(f"[DEBUG] Final decision: {label}")
+    if label == "phishing":
         print("PHISHING DETECTED!")
         print(f"  Triggering keywords: {found_keywords}")
         print(f"  Triggering suspicious URLs: {suspicious_urls}")
-        print(f"Max Confidence: {max_confidence * 100:.2f}%")
-        label = "phishing"
     else:
-        print("SAFE (Did not meet all phishing criteria: model, keyword, and suspicious URL).")
+        print("SAFE (Did not meet phishing criteria).")
         print(f"  Found keywords: {found_keywords}")
         print(f"  Found suspicious URLs: {suspicious_urls}")
-        print(f"Max Confidence: {max_confidence * 100:.2f}%")
-        label = "safe"
+
 
     # --- Log for retraining (ALWAYS log, both classes) ---
     log_for_retraining(raw_text, label, timestamp)
@@ -386,6 +510,8 @@ def process_text(text, timestamp, tokenizer, model, softmax, suspicious_keywords
         "full_text": text,
         "anomaly": is_anomaly,
         "anomaly_reason": anomaly_reason,
+        "chatgpt_used": chatgpt_used,
+        "chatgpt_result": chatgpt_result,
     }
 
     # --- Real-time anomaly alert ---
