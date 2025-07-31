@@ -16,6 +16,18 @@ When suspicious content is found, the system can alert the user or log the case 
 
 ---
 
+
+## 🎥 Demo Videos
+
+- [Real-Time Detection Demo](https://youtu.be/LF4VCWCRUhU)  
+  *Live demo showing instant phishing detection on real-world screenshots.*
+
+- [SafeNet Demo](https://youtu.be/vm5JjY1Pu4U)  
+  *Overview and walkthrough of the SafeNet system and its key features.*
+
+---
+
+
 ## 📁 Key Files and Structure
 
 | Path                           | Description                                          |
@@ -37,3 +49,4 @@ When suspicious content is found, the system can alert the user or log the case 
   `C:\Program Files\Tesseract-OCR\tesseract.exe`
 - env.example .env  # Edit to add OpenAI API key if needed
 ---
+
